@@ -10,28 +10,22 @@ See http://pytest.org/latest/usage.html for more invocations.
 
 """
 import sys
-import os
 
 import pyopencl as cl
 import pytest
 
 import nengo
 import nengo.tests.test_synapses
-from nengo.utils.testing import find_modules, allclose
+from nengo.utils.testing import allclose
 
 import nengo_ocl
-from nengo_ocl.tests.utils import load_functions
 
 ctx = cl.create_some_context()
 
 
-def OclSimulator(*args, **kwargs):
-    return nengo_ocl.Simulator(*args, context=ctx, **kwargs)
-
-
-def pytest_funcarg__Simulator(request):
-    """The Simulator class being tested."""
-    return OclSimulator
+class OclSimulator(nengo_ocl.Simulator):
+    def __init__(self, *args, **kwargs):
+        super(OclSimulator, self).__init__(*args, context=ctx, **kwargs)
 
 
 def allclose_tol(*args, **kwargs):
@@ -40,24 +34,7 @@ def allclose_tol(*args, **kwargs):
     return allclose(*args, **kwargs)
 
 
-nengo_dir = os.path.dirname(nengo.__file__)
-modules = find_modules(nengo_dir, prefix='nengo')
-tests = load_functions(modules, arg_pattern='^Simulator$')
-
 nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
-
-locals().update(tests)
-
-# --- nengo_deeplearning
-try:
-    import nengo_deeplearning
-except ImportError:
-    pass
-else:
-    nengo_deeplearning_dir = os.path.dirname(nengo_deeplearning.__file__)
-    modules = find_modules(nengo_deeplearning_dir, prefix='nengo_deeplearning')
-    tests = load_functions(modules, arg_pattern='^Simulator$')
-    locals().update(tests)
 
 
 if __name__ == '__main__':
