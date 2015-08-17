@@ -255,5 +255,102 @@ def test_one_short_segment_many_longer_dots(planner):
             X_js=[range(ND)])
 
 
+def test_speed():
+    import time
+
+    rng = np.random.RandomState(3294)
+
+    k = 300
+    # k = 100
+    ms = [rng.randint(100, 1000) for i in range(k)]
+    ns = [rng.randint(100, 1000) for i in range(k)]
+
+    aa = [rng.normal(size=(m, n)).astype('float32') for m, n in zip(ms, ns)]
+    xx = [rng.normal(size=n).astype('float32') for n in ns]
+    yy = [rng.normal(size=m).astype('float32') for m in ms]
+    ajs = list(range(k))
+    xjs = list(range(k))
+    # ajs = [rng.randint(k, size=p) for i in range(k)]
+    # xjs = [rng.randint(k, size=p) for i in range(k)]
+
+    A = RA(aa)
+    X = RA(xx)
+    Y = RA(yy)
+    A_js = RA(ajs)
+    X_js = RA(xjs)
+    alpha = 0.5
+    beta = 0.1
+
+    # -- prepare initial conditions on device
+    queue = cl.CommandQueue(ctx)
+    # queue = cl.CommandQueue(ctx, properties=cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
+    clA = CLRA(queue, A)
+    clX = CLRA(queue, X)
+    clY = CLRA(queue, Y)
+    clA_js = CLRA(queue, A_js)
+    clX_js = CLRA(queue, X_js)
+    assert allclose(A, clA)
+    assert allclose(X, clX)
+    assert allclose(Y, clY)
+    assert allclose(A_js, clA_js)
+    assert allclose(X_js, clX_js)
+
+    # -- speed test in ocl blas
+    from pyopencl.array import Array
+    import pyopencl_blas as blas
+    blas.setup()
+
+    def array(a):
+        cla = Array(queue, a.shape, a.dtype)
+        cla.set(a)
+        return cla
+
+    clAs = [array(a) for a in A]
+    clXs = [array(x.ravel()) for x in X]
+    clYs = [array(y.ravel()) for y in Y]
+
+    # queues = [cl.CommandQueue(ctx) for _ in range(k)]
+    queues = [cl.CommandQueue(ctx, properties=cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
+              for _ in range(k)]
+
+    t0 = time.time()
+    # for A, X, Y in zip(clAs, clXs, clYs):
+    #     blas.gemv(queue, A, X, Y)
+    # queue.finish()
+    for i, [A, X, Y] in enumerate(zip(clAs, clXs, clYs)):
+        q = queues[i % len(queues)]
+        blas.gemv(q, A, X, Y)
+        q.flush()
+    # for q in queues:
+    #     q.flush()
+    for q in queues:
+        q.finish()
+    t0 = time.time() - t0
+    print("clBLAS: %0.3f" % t0)
+
+    # -- run cl computation
+    prog = plan_ragged_gather_gemv(
+        queue, alpha, clA, clA_js, clX, clX_js, beta, clY)
+    plans = prog.choose_plans()
+
+    print('-' * 5 + ' Plans ' + '-' * 45)
+    for plan in plans:
+        print(plan)
+
+    t = time.time()
+    for plan in plans:
+        plan()
+    t = time.time() - t
+    print("nengo_ocl: %0.3f" % t)
+
+    # # -- ensure they match
+    # for i in range(k):
+    #     ref = beta * Y[i]
+    #     for aj, xj in zip(A_js[i], X_js[i]):
+    #         ref += alpha * np.dot(A[aj], X[xj])
+    #     sim = clY[i]
+    #     assert np.allclose(ref, sim, atol=1e-3, rtol=1e-3)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
