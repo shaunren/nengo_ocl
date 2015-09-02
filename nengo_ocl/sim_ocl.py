@@ -1,4 +1,5 @@
 import collections
+import inspect
 import logging
 import os
 import warnings
@@ -134,7 +135,8 @@ class Simulator(sim_npy.Simulator):
         # make plans
         plans = []
         for (fn, t_in, x_in), signals in unique_ops.items():
-            fn_name = fn.__name__
+            fn_name = (fn.__name__ if inspect.isfunction(fn) else
+                       fn.__class__.__name__)
             if fn_name == "<lambda>":
                 fn_name += "%d" % len(plans)
 
@@ -206,7 +208,7 @@ class Simulator(sim_npy.Simulator):
         ix_iy = list(zip(in_idx, out_idx))
 
         def step():
-            t = self.all_data[t_idx][0, 0] - dt if t_in else 0
+            t = float(self.all_data[t_idx][0, 0] if t_in else 0)
             for ix, iy in ix_iy:
                 if ix is not None:
                     x = self.all_data[ix]
