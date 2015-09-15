@@ -23,9 +23,9 @@ import nengo_ocl
 ctx = cl.create_some_context()
 
 
-class OclSimulator(nengo_ocl.Simulator):
+class Simulator(nengo_ocl.Simulator):
     def __init__(self, *args, **kwargs):
-        super(OclSimulator, self).__init__(*args, context=ctx, **kwargs)
+        super(Simulator, self).__init__(*args, context=ctx, **kwargs)
 
 
 def allclose_tol(*args, **kwargs):
