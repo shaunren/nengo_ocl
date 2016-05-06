@@ -548,22 +548,32 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
             __global int *Ybufpos
         )
         {
-            int i = get_global_id(0);
+            const int i = get_global_id(0);
             const int k = get_global_id(1);
-            __global const ${Xtype} *x = Xdata + Xstarts[k];
-            __global ${Ytype} *y = Ydata + Ystarts[k];
-            __global const ${Atype} *a = Adata + Astarts[k];
-            __global const ${Btype} *b = Bdata + Bstarts[k];
 
             const int n = shape0s[k];
             const int na = Ashape0s[k];
             const int nb = Bshape0s[k];
+
+            __local ${Atype} a[${na_max}];
+            __local ${Btype} b[${nb_max}];
+            const int ti = get_local_id(0);
+            if (ti < na)
+                a[ti] = (Adata + Astarts[k])[ti];
+            if (ti < nb)
+                b[ti] = (Bdata + Bstarts[k])[ti];
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            if (i >= n)
+                return;
+
+            __global const ${Xtype} *x = Xdata + Xstarts[k];
+            __global ${Ytype} *y = Ydata + Ystarts[k];
+
             if (na == 0 && nb == 1) {
-                for (; i < n; i += get_global_size(0))
-                    y[i] = b[0] * x[i];
+                y[i] = b[0] * x[i];
             } else if (na == 1 && nb == 1) {
-                for (; i < n; i += get_global_size(0))
-                    y[i] = b[0] * x[i] - a[0] * y[i];
+                y[i] = b[0] * x[i] - a[0] * y[i];
     % if na_max > 1 or nb_max > 1:  # save registers: only compile if needed
             } else {  // general filtering
                 __global ${Xtype} *xbuf = Xbufdata + Xbufstarts[k];
@@ -575,29 +585,28 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
                 ${Ytype} yi;
                 int j, jj;
-                for (; i < n; i += get_global_size(0)) {
-                    yi = b[0] * x[i];
-                    if (nb > 1) {
-                        xbuf[ix*n + i] = x[i];  // copy input to buffer
-                        for (j = 1; j < nb; j++) {
-                            jj = (ix + j) % nb;
-                            yi += b[j] * xbuf[jj*n + i];
-                        }
-                    }
 
-                    if (na > 0) {
-                        yi -= a[0] * y[i];
-                        if (na > 1) {
-                            for (j = 1; j < na; j++) {
-                                jj = (iy + j) % na;
-                                yi -= a[j] * ybuf[jj*n + i];
-                            }
-                            ybuf[iy1*n + i] = yi;  // copy output to buffer
-                        }
+                yi = b[0] * x[i];
+                if (nb > 1) {
+                    xbuf[ix*n + i] = x[i];  // copy input to buffer
+                    for (j = 1; j < nb; j++) {
+                        jj = (ix + j) % nb;
+                        yi += b[j] * xbuf[jj*n + i];
                     }
-
-                    y[i] = yi;
                 }
+
+                if (na > 0) {
+                    yi -= a[0] * y[i];
+                    if (na > 1) {
+                        for (j = 1; j < na; j++) {
+                            jj = (iy + j) % na;
+                            yi -= a[j] * ybuf[jj*n + i];
+                        }
+                        ybuf[iy1*n + i] = yi;  // copy output to buffer
+                    }
+                }
+
+                y[i] = yi;
 
                 Xbufpos[k] = ix1;
                 Ybufpos[k] = iy1;
@@ -606,12 +615,15 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         }
         """
 
+    na_max = A.sizes.max()
+    nb_max = B.sizes.max()
+    assert nb_max >= 1
+
     textconf = dict(
         Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
-        na_max=A.sizes.max(), nb_max=B.sizes.max(),
+        na_max=na_max, nb_max=nb_max,
     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
-    assert textconf['nb_max'] >= 1
 
     full_args = (
         X.cl_shape0s,
@@ -643,7 +655,9 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     _fn = cl.Program(queue.context, text).build().linearfilter
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(max(X.shape0s), get_mwgs(queue))
+    max_len = min(max(X.shape0s.max(), na_max, nb_max), get_mwgs(queue))
+    assert na_max <= max_len and nb_max <= max_len
+
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(
