@@ -544,8 +544,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
             __global ${Xtype} *Xbufdata,
             __global const int *Ybufstarts,
             __global ${Ytype} *Ybufdata,
-            __global int *Xbufpos,
-            __global int *Ybufpos
+            __global const int *Xbufpos,
+            __global const int *Ybufpos
         )
         {
             const int i = get_global_id(0);
@@ -583,35 +583,44 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
                 const int ix1 = (ix > 0) ? ix - 1 : nb - 1;
                 const int iy1 = (iy > 0) ? iy - 1 : na - 1;
 
-                ${Ytype} yi;
-                int j, jj;
-
-                yi = b[0] * x[i];
+                ${Ytype} yi = b[0] * x[i];
+                int j;
                 if (nb > 1) {
                     xbuf[ix*n + i] = x[i];  // copy input to buffer
-                    for (j = 1; j < nb; j++) {
-                        jj = (ix + j) % nb;
-                        yi += b[j] * xbuf[jj*n + i];
-                    }
+                    for (j = 1; j < nb; j++)
+                        yi += b[j] * xbuf[((ix + j) % nb)*n + i];
                 }
 
                 if (na > 0) {
                     yi -= a[0] * y[i];
                     if (na > 1) {
-                        for (j = 1; j < na; j++) {
-                            jj = (iy + j) % na;
-                            yi -= a[j] * ybuf[jj*n + i];
-                        }
+                        for (j = 1; j < na; j++)
+                            yi -= a[j] * ybuf[((iy + j) % na)*n + i];
+
                         ybuf[iy1*n + i] = yi;  // copy output to buffer
                     }
                 }
 
                 y[i] = yi;
-
-                Xbufpos[k] = ix1;
-                Ybufpos[k] = iy1;
     % endif
             }
+        }
+
+        __kernel void linearfilter_inc(
+            __global const int *Ashape0s,
+            __global const int *Bshape0s,
+            __global int *Xbufpos,
+            __global int *Ybufpos
+        )
+        {
+            const int k = get_global_id(0);
+            const int na = Ashape0s[k];
+            const int nb = Bshape0s[k];
+
+            const int ix = Xbufpos[k];
+            const int iy = Ybufpos[k];
+            Xbufpos[k] = (ix > 0) ? ix - 1 : nb - 1;
+            Ybufpos[k] = (iy > 0) ? iy - 1 : na - 1;
         }
         """
 
@@ -626,23 +635,13 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
-        X.cl_shape0s,
-        X.cl_starts,
-        X.cl_buf,
-        Y.cl_starts,
-        Y.cl_buf,
-        A.cl_shape0s,
-        A.cl_starts,
-        A.cl_buf,
-        B.cl_shape0s,
-        B.cl_starts,
-        B.cl_buf,
-        Xbuf.cl_starts,
-        Xbuf.cl_buf,
-        Ybuf.cl_starts,
-        Ybuf.cl_buf,
-        Xbufpos,
-        Ybufpos,
+        X.cl_shape0s, X.cl_starts, X.cl_buf,
+        Y.cl_starts, Y.cl_buf,
+        A.cl_shape0s, A.cl_starts, A.cl_buf,
+        B.cl_shape0s, B.cl_starts, B.cl_buf,
+        Xbuf.cl_starts, Xbuf.cl_buf,
+        Ybuf.cl_starts, Ybuf.cl_buf,
+        Xbufpos, Ybufpos,
     )
 
     # --- build and print info (change maxregcount to avoid cache, force build)
@@ -652,7 +651,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     # _fn = built.linearfilter
     # _fn.set_args(*[arr.data for arr in full_args])
 
-    _fn = cl.Program(queue.context, text).build().linearfilter
+    program = cl.Program(queue.context, text).build()
+    _fn = program.linearfilter
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(max(X.shape0s.max(), na_max, nb_max), get_mwgs(queue))
@@ -660,15 +660,22 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(
+    plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = (
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.bw_per_call = (
         X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes)
-    rval.description = (
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return rval
+
+    inc = program.linearfilter_inc
+    inc_args = (A.cl_shape0s, B.cl_shape0s, Xbufpos, Ybufpos)
+    inc.set_args(*[arr.data for arr in inc_args])
+    inc_plan = Plan(queue, inc, (N,), lsize=None, name="cl_linearfilter_inc")
+    inc_plan.full_args = inc_args     # prevent garbage-collection
+
+    return [plan, inc_plan]
 
 
 def plan_probes(queue, periods, X, Y, tag=None):
