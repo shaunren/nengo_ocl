@@ -523,9 +523,6 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     assert X.ctype == Xbuf.ctype
     assert Y.ctype == Ybuf.ctype
 
-    Xbufpos = to_device(queue, np.zeros(N, dtype='int32'))
-    Ybufpos = to_device(queue, np.zeros(N, dtype='int32'))
-
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void linearfilter(
@@ -574,7 +571,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
                 y[i] = b[0] * x[i];
             } else if (na == 1 && nb == 1) {
                 y[i] = b[0] * x[i] - a[0] * y[i];
-    % if na_max > 1 or nb_max > 1:  # save registers: only compile if needed
+    % if uses_buf:  # save registers: only compile if needed
             } else {  // general filtering
                 __global ${Xtype} *xbuf = Xbufdata + Xbufstarts[k];
                 __global ${Ytype} *ybuf = Ybufdata + Ybufstarts[k];
@@ -606,6 +603,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
             }
         }
 
+    % if uses_buf:  # only compile if needed
         __kernel void linearfilter_inc(
             __global const int *Ashape0s,
             __global const int *Bshape0s,
@@ -622,15 +620,20 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
             Xbufpos[k] = (ix > 0) ? ix - 1 : nb - 1;
             Ybufpos[k] = (iy > 0) ? iy - 1 : na - 1;
         }
+    % endif
         """
 
     na_max = A.sizes.max()
     nb_max = B.sizes.max()
     assert nb_max >= 1
+    uses_buf = na_max > 1 or nb_max > 1
+
+    Xbufpos = to_device(queue, np.zeros(N if uses_buf else 0, dtype='int32'))
+    Ybufpos = to_device(queue, np.zeros(N if uses_buf else 0, dtype='int32'))
 
     textconf = dict(
         Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
-        na_max=na_max, nb_max=nb_max,
+        na_max=na_max, nb_max=nb_max, uses_buf=uses_buf,
     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
@@ -645,21 +648,20 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     )
 
     # --- build and print info (change maxregcount to avoid cache, force build)
-    # built = cl.Program(queue.context, text).build(
+    # program = cl.Program(queue.context, text).build(
     #     options=['-cl-nv-maxrregcount=55', '-cl-nv-verbose'])
-    # print(built.get_build_info(queue.device, cl.program_build_info.LOG))
-    # _fn = built.linearfilter
-    # _fn.set_args(*[arr.data for arr in full_args])
+    # print(program.get_build_info(queue.device, cl.program_build_info.LOG))
 
     program = cl.Program(queue.context, text).build()
     _fn = program.linearfilter
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(max(X.shape0s.max(), na_max, nb_max), get_mwgs(queue))
-    assert na_max <= max_len and nb_max <= max_len
+    max_len = X.shape0s.max()
+    lsize0 = min(max(max_len, na_max, nb_max), get_mwgs(queue))
+    assert na_max <= lsize0 and nb_max <= lsize0
 
-    gsize = (max_len, N)
-    lsize = (max_len, 1)
+    lsize = (lsize0, 1)
+    gsize = (round_up(max_len, lsize0), N)
     plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
     plan.full_args = full_args     # prevent garbage-collection
@@ -669,13 +671,16 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
 
-    inc = program.linearfilter_inc
-    inc_args = (A.cl_shape0s, B.cl_shape0s, Xbufpos, Ybufpos)
-    inc.set_args(*[arr.data for arr in inc_args])
-    inc_plan = Plan(queue, inc, (N,), lsize=None, name="cl_linearfilter_inc")
-    inc_plan.full_args = inc_args     # prevent garbage-collection
+    if not uses_buf:
+        return [plan]
+    else:
+        inc = program.linearfilter_inc
+        inc_args = (A.cl_shape0s, B.cl_shape0s, Xbufpos, Ybufpos)
+        inc.set_args(*[arr.data for arr in inc_args])
+        inc_plan = Plan(queue, inc, (N,), lsize=None, name="cl_linearfilter_inc")
+        inc_plan.full_args = inc_args     # prevent garbage-collection
 
-    return [plan, inc_plan]
+        return [plan, inc_plan]
 
 
 def plan_probes(queue, periods, X, Y, tag=None):
