@@ -115,9 +115,9 @@ def plan_timeupdate(queue, step, time, dt):
 
     gsize = (1,)
     lsize = None
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
-    rval.full_args = full_args     # prevent garbage-collection
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
+    plan.full_args = full_args     # prevent garbage-collection
+    return plan
 
 
 def plan_reset(queue, Y, values, tag=None):
@@ -177,14 +177,14 @@ def plan_reset(queue, Y, values, tag=None):
     _fn = cl.Program(queue.context, text).build().reset
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = (
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.bw_per_call = (
         Y.nbytes + values.nbytes + clYsizes.nbytes + clYstarts.nbytes)
-    rval.description = (
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_copy(queue, A, B, incs, tag=None):
@@ -265,13 +265,13 @@ def plan_copy(queue, A, B, incs, tag=None):
     _fn = cl.Program(queue.context, text).build().copy
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.bw_per_call = A.nbytes + B.nbytes
-    rval.description = (
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.bw_per_call = A.nbytes + B.nbytes
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(A), A.sizes.sum(), A.sizes.mean(), A.sizes.min(), A.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
@@ -369,14 +369,14 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     _fn = cl.Program(queue.context, text).build().slicedcopy
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.bw_per_call = 2 * (Ainds.nbytes + Ainds.sizes.sum()*A.dtype.itemsize)
-    rval.description = (
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.bw_per_call = 2 * (Ainds.nbytes + Ainds.sizes.sum()*A.dtype.itemsize)
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Ainds), Ainds.sizes.sum(),
          Ainds.sizes.mean(), Ainds.sizes.min(), Ainds.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_elementwise_inc(queue, A, X, Y, tag=None):
@@ -487,15 +487,15 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     mn = Y.sizes.max()
     gsize = (mn, N)
     lsize = None
-    rval = Plan(
+    plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.flops_per_call = 2 * Y.sizes.sum()
-    rval.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
-    rval.description = (
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 2 * Y.sizes.sum()
+    plan.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
@@ -785,16 +785,16 @@ def plan_probes(queue, periods, X, Y, tag=None):
     max_len = min(max(X.shape0s), get_mwgs(queue))
     gsize = (max_len, N,)
     lsize = (max_len, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_probes", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.cl_bufpositions = cl_bufpositions
-    rval.Y = Y
-    rval.bw_per_call = (2*X.nbytes + cl_periods.nbytes +
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_probes", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.cl_bufpositions = cl_bufpositions
+    plan.Y = Y
+    plan.bw_per_call = (2*X.nbytes + cl_periods.nbytes +
                         cl_countdowns.nbytes + cl_bufpositions.nbytes)
-    rval.description = (
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
@@ -857,13 +857,13 @@ ${code}
     _fn.set_args(*[arr.data for arr in full_args])
 
     gsize = (N,)
-    rval = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.description = (
+    plan = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(output), output.sizes.sum(),
          output.sizes.mean(), output.sizes.min(), output.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
@@ -1143,13 +1143,13 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     _fn = getattr(fns, fn_name)
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.bw_per_call = bw_per_call
-    rval.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.bw_per_call = bw_per_call
+    plan.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
                         (gsize[1], input0.sizes.sum(), input0.sizes.mean(),
                          input0.sizes.min(), input0.sizes.max()))
-    return rval
+    return plan
 
 
 def create_rngs(queue, n):
@@ -1340,9 +1340,9 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     max_len = min(min(rngs.shape0s), max(Y.shape0s))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    return plan
 
 
 def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
@@ -1421,10 +1421,10 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     max_len = min(max(Y.shape0s), get_mwgs(queue))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(
+    plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_presentinput", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    return rval
+    plan.full_args = full_args     # prevent garbage-collection
+    return plan
 
 
 def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
@@ -1554,11 +1554,11 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     _fn = cl.Program(queue.context, text).build().conv2d
     _fn.set_args(*full_args)
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
-    rval.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
+    plan.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
+    return plan
 
 
 def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
@@ -1651,8 +1651,8 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     _fn = cl.Program(queue.context, text).build().pool2d
     _fn.set_args(*full_args)
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2d", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.flops_per_call = X.size
-    rval.bw_per_call = X.nbytes + Y.nbytes
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2d", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = X.size
+    plan.bw_per_call = X.nbytes + Y.nbytes
+    return plan
