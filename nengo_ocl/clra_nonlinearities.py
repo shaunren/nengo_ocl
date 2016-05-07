@@ -1459,6 +1459,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     {
         const int j = get_global_id(0);
         const int i = get_global_id(1);
+        const int k = get_global_id(2);
         const int ij = i*${nyj} + j;
 
         const int tj = get_local_id(0);
@@ -1478,16 +1479,15 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         x += ${xstart};
         y += ${ystart};
 
-        const int kk = get_global_id(2);
-        ${type} out = b[kk*${nyi*nyj} + ij];
+        ${type} out = b[k*${nyi*nyj} + ij];
 
         for (int c = 0; c < ${nc}; c++) {
 
             // load image section
             __global const ${type} *xc = &x[c * ${nxi * nxj}];
-            for (int k = tij; k < ${npatch}; k += lsize) {
-                const int ki = k / ${njpatch};
-                const int kj = k % ${njpatch};
+            for (int kij = tij; kij < ${npatch}; kij += lsize) {
+                const int ki = kij / ${njpatch};
+                const int kj = kij % ${njpatch};
                 const int ii = i0 + ki;
                 const int jj = j0 + kj;
                 if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
@@ -1498,9 +1498,9 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + kk*${nc*si*sj} + c*${si*sj};
-            for (int k = tij; k < ${si*sj}; k += lsize) {
-                filter[k] = fc[k];
+            __global const ${type} *fc = f + k*${nc*si*sj} + c*${si*sj};
+            for (int kij = tij; kij < ${si*sj}; kij += lsize) {
+                filter[kij] = fc[kij];
             }
     % endif
             barrier(CLK_LOCAL_MEM_FENCE);
@@ -1510,7 +1510,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     % if conv:
                 out += filter[ii*${sj}+jj] * patch[${sti}*ti+ii][${stj}*tj+jj];
     % else:
-                out += f[((kk*${nc} + c)*${si*sj} + ii*${sj} + jj)*${nyi*nyj}]
+                out += f[((k*${nc} + c)*${si*sj} + ii*${sj} + jj)*${nyi*nyj}]
                        * patch[${sti}*ti+ii][${stj}*tj+jj];
     % endif
 
@@ -1518,7 +1518,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         }
 
         if (i < ${nyi} && j < ${nyj})
-            y[kk*${nyi*nyj} + ij] = out;
+            y[k*${nyi*nyj} + ij] = out;
     }
     """
 
@@ -1597,9 +1597,9 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
 
         // load image patch
         __global const ${type} *xc = &x[c * ${nxi * nxj}];
-        for (int k = tij; k < ${nipatch * njpatch}; k += lsize) {
-            const int ki = k / ${njpatch};
-            const int kj = k % ${njpatch};
+        for (int kij = tij; kij < ${nipatch * njpatch}; kij += lsize) {
+            const int ki = kij / ${njpatch};
+            const int kj = kij % ${njpatch};
             const int ii = i0*${st} + ki;
             const int jj = j0*${st} + kj;
             if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
