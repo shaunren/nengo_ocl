@@ -683,9 +683,6 @@ class Simulator(nengo.Simulator):
                 for p in getattr(self, attr)(ops)]
 
     def _plan_LinearFilter(self, ops):
-        for op in ops:
-            if op.input.ndim != 1:
-                raise NotImplementedError("Can only filter vectors")
         steps = [op.process.make_step(op.input.shape, op.output.shape,
                                       self.model.dt, rng=None) for op in ops]
         A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
@@ -1021,10 +1018,14 @@ Simulator.unsupported.extend([
     # learning rules
     ('nengo?tests?test_learning_rules*test_unsupervised*',
      "Unsupervised learning rules not implemented"),
-    ('nengo?tests?test_learning_rules*test_dt_dependence*',
-     "Filtering matrices (i.e. learned transform) not implemented"),
-    ('nengo?tests?test_learning_rules*test_reset*',
-     "Filtering matrices not implemented"),
+    ('nengo?tests?test_learning_rules*test_dt_dependence[[]BCM[]]',
+     "BCM learning rule not implemented"),
+    ('nengo?tests?test_learning_rules*test_dt_dependence[[]Oja[]]',
+     "Oja learning rule not implemented"),
+    (r'nengo?tests?test_learning_rules*test_reset[[]BCM[]]',
+     "BCM learning rule not implemented"),
+    (r'nengo?tests?test_learning_rules*test_reset[[]Oja[]]',
+     "Oja learning rule not implemented"),
     ('nengo?tests?test_learning_rules*test_voja_*',
      "VOja learning rule not implemented"),
 
