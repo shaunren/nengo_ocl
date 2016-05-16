@@ -432,7 +432,6 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
 
         ////////// MAIN FUNCTION //////////
         __kernel void elementwise_inc(
-            __global const int *sizes,
             __global const int *offsets,
             __global const int *Ashape0s,
             __global const int *Ashape1s,
@@ -453,16 +452,14 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         {
             const int n = get_global_id(1);
             const int ij = get_global_id(0) + offsets[n];
-            if (ij >= sizes[n])
-                return;
 
             __global const ${Atype} *a = Adata + Astarts[n];
             __global const ${Xtype} *x = Xdata + Xstarts[n];
             __global ${Ytype} *y = Ydata + Ystarts[n];
 
             const int Ystride0 = Ystride0s[n];
+            const int Yshape0 = Yshape0s[n];
             const int Yshape1 = Yshape1s[n];
-
             const int i = ij / Yshape1;
             const int j = ij % Yshape1;
 
@@ -470,7 +467,9 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
                 a, Ashape0s[n], Ashape1s[n], Astride0s[n], i, j);
             ${Xtype} xx = get_element(
                 x, Xshape0s[n], Xshape1s[n], Xstride0s[n], i, j);
-            y[i*Ystride0 + j] += aa * xx;
+
+            if (i < Yshape0)
+                y[i*Ystride0 + j] += aa * xx;
         }
         """
 
@@ -482,7 +481,6 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
-        to_device(queue, sizes),
         to_device(queue, offsets),
         to_device(queue, A.shape0s[inds]),
         to_device(queue, A.shape1s[inds]),
